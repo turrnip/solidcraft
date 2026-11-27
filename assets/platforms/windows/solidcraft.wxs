@@ -100,19 +100,19 @@
 
     <!-- The wizard (full UI only; `/qn` and `/passive` skip it and take the command line as it is).
          A scope given on the command line is kept and its page skipped. -->
-    <SetProperty Id="SolidcraftScopeFixed" Value="1" After="AppSearch" Sequence="ui"
+    <SetProperty Id="SolidcraftScopeFixed" Action="SetSolidcraftScopeFixed" Value="1" After="AppSearch" Sequence="ui"
         Condition="MSIINSTALLPERUSER=1 OR NOT ALLUSERS" />
     <!-- Only a per-user SolidCraft is installed: update it there, as a per-machine one is. The
          wizard started in the per-machine context, so it didn't find it as an upgrade. -->
-    <SetProperty Id="SolidcraftUserUpgrade" Value="1" After="SolidcraftScopeFixed" Sequence="ui"
+    <SetProperty Id="SolidcraftUserUpgrade" Action="SetSolidcraftUserUpgrade" Value="1" After="SetSolidcraftScopeFixed" Sequence="ui"
         Condition="SOLIDCRAFTUSERDIR AND NOT SOLIDCRAFTMACHINEDIR AND NOT WIX_UPGRADE_DETECTED AND NOT SolidcraftScopeFixed" />
-    <SetProperty Id="ALLUSERS" Action="SetPerUserUpgradeAllUsers" Value="2" After="SolidcraftUserUpgrade" Sequence="ui"
+    <SetProperty Id="ALLUSERS" Action="SetPerUserUpgradeAllUsers" Value="2" After="SetSolidcraftUserUpgrade" Sequence="ui"
         Condition="SolidcraftUserUpgrade" />
     <SetProperty Id="MSIINSTALLPERUSER" Action="SetPerUserUpgradeInstall" Value="1" After="SetPerUserUpgradeAllUsers" Sequence="ui"
         Condition="SolidcraftUserUpgrade" />
     <!-- The two folders the scope page switches between; an earlier install's folder in each. -->
-    <SetProperty Id="SolidcraftMachineFolder" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="ui" Condition="NOT $(var.PerUser)" />
-    <SetProperty Id="SolidcraftUserFolder" Value="[LocalAppDataFolder]Programs\SolidCraft\" After="SolidcraftMachineFolder" Sequence="ui" />
+    <SetProperty Id="SolidcraftMachineFolder" Action="SetSolidcraftMachineFolder" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="ui" Condition="NOT $(var.PerUser)" />
+    <SetProperty Id="SolidcraftUserFolder" Action="SetSolidcraftUserFolder" Value="[LocalAppDataFolder]Programs\SolidCraft\" After="SetSolidcraftMachineFolder" Sequence="ui" />
     <Property Id="SolidcraftScope" Value="machine" />
 
     <Feature Id="Main" Title="SolidCraft" Level="1">
