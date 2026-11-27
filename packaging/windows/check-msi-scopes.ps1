@@ -54,7 +54,7 @@ function Build-Msi([string] $Version, [string] $Wxs, [string] $Name) {
   $msi = Join-Path $Out $Name
   & wix build $Wxs -arch $Arch -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext `
     -culture en-US -loc (Join-Path $Root 'assets/platforms/windows/solidcraft.en-us.wxl') `
-    -d "Version=$Version" -d "DisplayVersion=$Version" -d "BinDir=$Stage" -d "IconPath=$Icon" -o $msi
+    -d "Version=$Version" -d "DisplayVersion=$Version" -d "BinDir=$Stage" -d "IconPath=$Icon" -o $msi 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "wix build $Name failed ($LASTEXITCODE)" }
   return $msi
 }
