@@ -896,16 +896,17 @@ mod tests {
     /// the box edge (0, 1, 0)-(1, 1, 0) at (0.5, 1, 0), 0.118 from the line's end. The merge
     /// puts a new vertex between the two, 0.059 from each, so the WR-469 step would give that
     /// vertex the tolerance 2 * 0.059 = 0.11804298874989479: 5900 times the box's 1e-5
-    /// tolerance, past the 2000 times (GROWTH_PAST_RATIO times LARGE_SMALL_SIZE_RATIO, Test
-    /// #82's width) that §5.1 of `docs/validity-and-tolerances.md` refuses whatever the
-    /// clearance. Not upstream (#21368): the merge is refused with
-    /// `TopologyFailure::VertexToleranceTooWide` before the edge record is made. The merge's
-    /// earlier steps have already made the new vertex and split the box edge it classifies
-    /// onto (9 vertices, 13 edges) and left the new vertex at the width its glue needed
-    /// (0.1180); the refusal builds no edge at it and adds none of the step's own width
-    /// (0.11804, twice the farther end), so that value is absent. Both rows replay as the
-    /// refusal's status (SM_ERR, 1001) instead of a body. Without the refusal the step widens
-    /// the vertex to 0.11804 and `validate_pointers` refuses the body (Test #82).
+    /// tolerance, past the 2000 times (`GROWTH_PAST_RATIO` times
+    /// `LARGE_SMALL_SIZE_RATIO`, Test #82's width) that §5.1 of
+    /// `docs/validity-and-tolerances.md` refuses whatever the clearance. Not upstream
+    /// (#21368): the merge is refused with `TopologyFailure::VertexToleranceTooWide` before
+    /// the edge record is made. The merge's earlier steps have already made the new vertex
+    /// and split the box edge it classifies onto (9 vertices, 13 edges) and left the new
+    /// vertex at the width its glue needed (0.1180); the refusal builds no edge at it and
+    /// adds none of the step's own width (0.11804, twice the farther end), so that value is
+    /// absent. Both rows replay as the refusal's status (`SM_ERR`, 1001) instead of a body.
+    /// Without the refusal the step widens the vertex to 0.11804 and `validate_pointers`
+    /// refuses the body (Test #82).
     #[test]
     fn imprint_face_split_past_the_width_limit_is_refused() {
         let ctx = CaseContext {
