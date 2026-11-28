@@ -46,6 +46,11 @@
 //! `UpdateVertexEdgeIntervals` sets it. The pinned C++ leaves gaps up to the full
 //! tolerance, which `AssertValid` refuses above half of it.
 //! See `plan/upstream-issues/WR-469--make-edge-in-face-vertex-tolerance-gap.md`.
+//! Not upstream (#21368): that step widens no vertex past the width Test #82 refuses whatever its
+//! ball clears (`GROWTH_PAST_RATIO` times the size ratio times the body's tolerance), so a merge
+//! whose ends would need such a tolerance is refused with
+//! [`TopologyFailure::VertexToleranceTooWide`] before the edge record is made, naming the vertex
+//! and the tolerance it would need.
 //! Not upstream (WR-527, #1527): on two planes, `MakeEdgeInFaceWithVU` leaves an inner loop whose
 //! test point lies outside the new face's outer loop box (at the retry tolerance)
 //! in place without classifying it, as the fork's tangency-labs/smlib@60b1c6a; on a
@@ -1596,6 +1601,27 @@ pub fn make_edge_in_face_with_vu_with_curve_identity(
         _ => false,
     };
 
+    // Not upstream (#21368): the step below grows each end vertex's tolerance to twice the
+    // farthest gap at it. Past the width Test #82 refuses whatever the ball clears, a tolerance
+    // no longer covers a rounding or intersection gap but a misplaced edge end, so refuse the
+    // merge before any record is made rather than widen the vertex past it. A merge that would
+    // not widen the vertex does not refuse here: the step only grows.
+    let widest = super::validation::widest_vertex_tolerance(b);
+    for (vertex, t) in [(start_vertex, t_start), (end_vertex, t_end)] {
+        let needed = merge_vertex_tolerance(k, b, &curve, t, vertex)?;
+        if needed > widest && needed > vertex::tolerance(b, vertex)? {
+            return Err(Failure::new(
+                OP,
+                TopologyFailure::VertexToleranceTooWide {
+                    needed,
+                    limit: widest,
+                },
+            )
+            .at(EntityRef::Vertex(vertex))
+            .into_error());
+        }
+    }
+
     let edge_id = b.add_edge_record(crate::topology::Edge::new([start_vertex, end_vertex]))?;
     let mut uses = Vec::new();
     let mut vertexuses = Vec::new();
@@ -2031,20 +2057,12 @@ pub fn make_edge_in_face_with_vu_with_curve_identity(
     {
         let record = b.edge(edge_id)?;
         let curve = required(record.curve.as_ref(), "new edge without curve")?;
-        let (curve_start, curve_end) = (
-            curve.evaluate_point(k, t_start)?,
-            curve.evaluate_point(k, t_end)?,
-        );
         // the farthest end at the vertex, of the new edge and of every other edge there,
         // so that every end at the vertex lies within half the grown tolerance
-        let start_gap = curve_start
-            .distance(vertex::point(b, start_vertex)?)
-            .max(farthest_end_gap(k, b, start_vertex)?);
-        let end_gap = curve_end
-            .distance(vertex::point(b, end_vertex)?)
-            .max(farthest_end_gap(k, b, end_vertex)?);
-        vertex::set_tolerance(b, start_vertex, 2.0 * start_gap, true, true)?;
-        vertex::set_tolerance(b, end_vertex, 2.0 * end_gap, true, true)?;
+        let start_needed = merge_vertex_tolerance(k, b, curve, t_start, start_vertex)?;
+        let end_needed = merge_vertex_tolerance(k, b, curve, t_end, end_vertex)?;
+        vertex::set_tolerance(b, start_vertex, start_needed, true, true)?;
+        vertex::set_tolerance(b, end_vertex, end_needed, true, true)?;
     }
     // These skeleton caches are derived from the authoritative use lists.
     sync_face_cache(b, face)?;
@@ -2093,6 +2111,22 @@ fn farthest_end_gap(k: &Kernel, b: &Brep, v: VertexId) -> Result<f64> {
         }
     }
     Ok(worst)
+}
+
+/// The vertex tolerance a merge would set at `v` for an edge whose curve ends at parameter `t`:
+/// twice the farthest gap from `v` to the ends of the edges at it, the new edge's end (the curve
+/// at `t`) included. Before the merge the new edge is not in the B-rep yet, so the caller names
+/// its end; after it, [`farthest_end_gap`] measures the same end itself.
+///
+/// # Errors
+///
+/// [`SolidError::NotFound`] for a dangling `v`; those of evaluating a curve.
+fn merge_vertex_tolerance(k: &Kernel, b: &Brep, curve: &Curve, t: f64, v: VertexId) -> Result<f64> {
+    let gap = curve
+        .evaluate_point(k, t)?
+        .distance(vertex::point(b, v)?)
+        .max(farthest_end_gap(k, b, v)?);
+    Ok(2.0 * gap)
 }
 
 #[derive(Clone, Copy)]

@@ -33,6 +33,7 @@ pub use assert_valid::{
     ValidityScope,
 };
 pub(crate) use pointers::validate_geometry;
+pub(crate) use pointers::widest_vertex_tolerance;
 pub(crate) use pointers::GROWTH_PAST_RATIO;
 pub use pointers::{edge_tube_reaches, validate_pointers, vertex_ball_reaches, PointerCheck};
 pub(crate) use pointers::{validate_pointers_excluding, validate_pointers_traced};

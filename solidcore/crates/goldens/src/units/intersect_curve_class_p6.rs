@@ -836,6 +836,8 @@ impl UnitDiff for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solidcore::error::topology::TopologyFailure;
+    use solidcore::error::{Reason, SM_ERR};
     use solidcore::geom::tol::scaled_zero_of_curve;
     use solidcore::intersect::curve_class::p1::xsect_tol_2d_or_3d_for_classify_pair;
     use solidcore::curve::curve::p2::CurveKind;
@@ -890,44 +892,77 @@ mod tests {
     }
 
     /// WR-469 (tangency-labs/solidcraft#17985): `imprint_face_split_f0` and `_f2` place the
-    /// line from the origin along (1, 2, 0)/sqrt 5, of length 1, and end its new edge at a
-    /// new vertex 0.059 past the line's end. `MakeEdgeInFaceWithVU`'s step makes that
-    /// vertex's tolerance exactly twice its gap (0.11804298874989479), so the end lies within
-    /// half of it; without the step `RefreshTolerance(FALSE)` left 0.059022494374947436,
-    /// 1e-6 over the gap and under twice it (MEASURED, before the step became the only
-    /// path). The row's two moved values are the new vertex's tolerance: in the sorted
-    /// vertex tolerances (`out[159]`, the only one past 1e-5) and after its point
-    /// (`out[177]`). Replays both rows.
+    /// line from the origin along (1, 2, 0)/sqrt 5, of length 1, and classify its far end onto
+    /// the box edge (0, 1, 0)-(1, 1, 0) at (0.5, 1, 0), 0.118 from the line's end. The merge
+    /// puts a new vertex between the two, 0.059 from each, so the WR-469 step would give that
+    /// vertex the tolerance 2 * 0.059 = 0.11804298874989479: 5900 times the box's 1e-5
+    /// tolerance, past the 2000 times (GROWTH_PAST_RATIO times LARGE_SMALL_SIZE_RATIO, Test
+    /// #82's width) that §5.1 of `docs/validity-and-tolerances.md` refuses whatever the
+    /// clearance. Not upstream (#21368): the merge is refused with
+    /// `TopologyFailure::VertexToleranceTooWide` before the edge record is made. The merge's
+    /// earlier steps have already made the new vertex and split the box edge it classifies
+    /// onto (9 vertices, 13 edges) and left the new vertex at the width its glue needed
+    /// (0.1180); the refusal builds no edge at it and adds none of the step's own width
+    /// (0.11804, twice the farther end), so that value is absent. Both rows replay as the
+    /// refusal's status (SM_ERR, 1001) instead of a body. Without the refusal the step widens
+    /// the vertex to 0.11804 and `validate_pointers` refuses the body (Test #82).
     #[test]
-    fn imprint_face_split_new_vertex_tolerance_is_twice_its_gap() {
+    fn imprint_face_split_past_the_width_limit_is_refused() {
         let ctx = CaseContext {
             root: crate::case::repo_root(),
             seeds: 16,
         };
         let cases = Runner.cases(&ctx).unwrap();
+        let case = cases
+            .iter()
+            .find(|c| c.name == "imprint_face_split_f0")
+            .unwrap();
+        let i: Fixture = case.parse().unwrap();
+        let mut k = Kernel::default();
+        let mut g = geometry(&k, i.kind, i.scale, i.pick).unwrap();
         // the placed line's end, as the case builds it
-        let k = Kernel::default();
-        let g = geometry(&k, 5, 1.0, [0, 11, 2, 0]).unwrap();
         let end = g.curve.evaluate_point(&k, 1.0).unwrap();
-        // the allowances are relative 1e-12: the values are unit-scale distances, which
-        // rounding moves by a few ulp (about 1e-16 relative), and doubling is exact; a
-        // missing step moves the tolerance by half (0.059 against 0.118)
-        assert!(end.distance(Vec3::new(1.0, 2.0, 0.0) * (1.0 / 5f64.sqrt())) <= 1e-12);
+        assert!(end.distance(Vec3::new(1.0, 2.0, 0.0) * (i.scale / 5f64.sqrt())) <= 1e-12);
+        g.brep.set_editing_enabled(true);
+        let mut a = classification(&k, &i.a, i.tol, &g.first).unwrap();
+        let b = classification(&k, &i.b, i.tol, &g.first).unwrap();
+        a.set_fillet_data(None, false);
+        let err = a
+            .merge_interval_mut(&mut k, &mut g, i.index, false, Some(&b))
+            .unwrap_err();
+        let SolidError::Failed(failure) = &err else {
+            panic!("not a typed failure: {err}");
+        };
+        let Reason::Topology(TopologyFailure::VertexToleranceTooWide { needed, limit }) =
+            &failure.reason
+        else {
+            panic!("not the width refusal: {err}");
+        };
+        // twice the gap between the new vertex and each end it would join
+        assert!(*needed > 0.118 && *needed < 0.1181, "needed {needed:e}");
+        // the widest Test #82 accepts without a clearance proof: 2 * 1000 * the body's 1e-5
+        assert!((*limit - 0.02).abs() <= 1e-15, "limit {limit:e}");
+        assert_eq!(*limit, 2.0 * 1000.0 * g.brep.tolerance());
+        // the refusal names the vertex it would have widened
+        assert!(matches!(err.entity(), Some(EntityRef::Vertex(_))), "{err}");
+        // the merge's earlier steps make the new vertex and split the edge it classifies onto
+        // (12 box edges plus one); the refusal builds no edge of the curve's own, which would be
+        // the fourteenth, and adds none of the step's width (the step would set twice the
+        // farther end).
+        assert_eq!(g.brep.vertex_list().len(), 9);
+        assert_eq!(g.brep.edge_list().len(), 13);
+        for &v in g.brep.vertex_list() {
+            let tolerance = topo_vertex::tolerance(&g.brep, v).unwrap();
+            assert!(
+                tolerance < 0.11804298874989479,
+                "the step widened the vertex to {tolerance:e}"
+            );
+        }
         for name in ["imprint_face_split_f0", "imprint_face_split_f2"] {
             let case = cases.iter().find(|c| c.name == name).unwrap();
             let out = &Runner.run_rust(case).unwrap().values["out"];
-            assert_eq!(out.len(), 181, "{name}");
-            let vertex = Vec3::new(out[174], out[175], out[176]);
-            let gap = vertex.distance(end);
-            assert!(gap > 0.059 && gap < 0.0591, "{name}: gap {gap:e}");
-            assert!(
-                (out[177] - 2.0 * gap).abs() <= 1e-12 * out[177],
-                "{name}: {} {gap:e}",
-                out[177]
-            );
-            assert_eq!(out[159], out[177], "{name}");
-            let others = out[151..159].iter().chain(&out[160..174]);
-            assert!(others.copied().all(|t| t == 1e-5), "{name}: {out:?}");
+            assert_eq!(out.len(), 1, "{name}");
+            assert_eq!(out[0], f64::from(SM_ERR), "{name}");
         }
     }
 
@@ -970,12 +1005,12 @@ mod tests {
     }
 
     /// WR-469 at a gap the validity rules accept (the companion of
-    /// `imprint_face_split_new_vertex_tolerance_is_twice_its_gap`, whose made-up 0.059 gap is
-    /// 5900 times the box's tolerance, past the 2000 times that §5.1 of
-    /// `docs/validity-and-tolerances.md` refuses whatever the clearance, on main as with the
-    /// step). The same `imprint_face_split_f0` imprint with the line shortened to
-    /// `sqrt(1.25) - 4e-5`: its end lies on the ray through the edge point (0.5, 1, 0), 4e-5
-    /// short of it, and the new vertex lands between the two. Asserts, from the body:
+    /// `imprint_face_split_past_the_width_limit_is_refused`, whose made-up 0.059 gap needs
+    /// 0.118, past the 0.02 that §5.1 of `docs/validity-and-tolerances.md` refuses whatever
+    /// the clearance, so it is refused). The same `imprint_face_split_f0` imprint with the
+    /// line shortened to `sqrt(1.25) - 4e-5`: its end lies on the ray through the edge point
+    /// (0.5, 1, 0), 4e-5 short of it, and the new vertex lands between the two. Asserts, from
+    /// the body:
     ///
     /// - the step: the vertex tolerance `t` is twice `d`, the farthest end of an edge at the
     ///   vertex (so every end lies within `t/2`, `AssertValid`'s limit), and `d` is at least

@@ -948,6 +948,18 @@ pub enum TopologyFailure {
         /// The number of edges at the vertex.
         edges: usize,
     },
+    /// Making the edge would need the end vertex's tolerance to be `needed`, past `limit`, the
+    /// widest a vertex may carry past the ratio of the body's tolerance without a clearance proof
+    /// (Test #82's refusal width). A tolerance covers a gap, never a misplaced vertex, so the edge
+    /// is refused rather than the vertex widened past it. [`ErrorKind::NotWithinTolerance`]; not
+    /// upstream (#21368).
+    VertexToleranceTooWide {
+        /// The tolerance the merge would have to set: twice the farthest gap from the vertex to
+        /// its edge ends.
+        needed: f64,
+        /// The widest tolerance the validity rules accept without a clearance proof.
+        limit: f64,
+    },
     /// The caller gave a vertex use that lies on no face (a shell or wire vertex use) where the
     /// routine needs one on a face. Its argument, so of kind [`ErrorKind::InvalidInput`].
     /// `SM_ERR_NULL_POINTER`, or the site's status.
@@ -1188,6 +1200,7 @@ impl TopologyFailure {
             | Self::VertexNotInRegion { .. }
             | Self::VertexNotOnEdge
             | Self::VertexNotOnTwoEdges { .. }
+            | Self::VertexToleranceTooWide { .. }
             | Self::VertexuseWithoutVertex
             | Self::VertexusesNotGiven
             | Self::VertexusesOnDifferentFaces
@@ -1417,9 +1430,9 @@ impl TopologyFailure {
             | Self::VoidOwnerUndecided
             | Self::WireEndSqueezed => ErrorKind::Unsupported,
             Self::Defect { .. } => ErrorKind::StageFailed,
-            Self::EdgeEndOffVertex { .. } | Self::TrimCurveOffEnd { .. } => {
-                ErrorKind::NotWithinTolerance
-            }
+            Self::EdgeEndOffVertex { .. }
+            | Self::TrimCurveOffEnd { .. }
+            | Self::VertexToleranceTooWide { .. } => ErrorKind::NotWithinTolerance,
             Self::FaceNotMade { class }
             | Self::MatrixNotDecomposed { class }
             | Self::NoPlaneThroughCurves { class } => *class,
@@ -1884,6 +1897,11 @@ impl core::fmt::Display for TopologyFailure {
             Self::VertexNotOnTwoEdges { edges } => {
                 write!(f, "the vertex is on {edges} edges, not two")
             }
+            Self::VertexToleranceTooWide { needed, limit } => write!(
+                f,
+                "merging the edge needs the vertex tolerance {needed}, past the widest {limit} that \
+                 needs no clearance proof"
+            ),
             Self::VertexUseNotOnFace => f.write_str("the vertex use is not on a face"),
             Self::VertexWithoutUses => f.write_str("a vertex of a vertex loop has no vertex use"),
             Self::VertexuseWithoutVertex => f.write_str("an edge use's vertex use has no vertex"),
@@ -2144,6 +2162,14 @@ mod tests {
                     to_vertex: false,
                     distance: 1.0,
                     tolerance: 0.5,
+                },
+                SM_ERR,
+                K::NotWithinTolerance,
+            ),
+            (
+                TopologyFailure::VertexToleranceTooWide {
+                    needed: 0.059,
+                    limit: 0.02,
                 },
                 SM_ERR,
                 K::NotWithinTolerance,

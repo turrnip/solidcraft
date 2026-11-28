@@ -1044,6 +1044,13 @@ fn wide_vertex_limit(b: &Brep) -> f64 {
 /// (`validate_and_update`), nor does the healer's `Fix_TolSizes` (`heal::heal_data`).
 pub(crate) const GROWTH_PAST_RATIO: f64 = 2.0;
 
+/// The widest tolerance a vertex may carry and still pass Test #82 without a clearance proof:
+/// [`GROWTH_PAST_RATIO`] times [`wide_vertex_limit`]. Past it the vertex is refused whatever its
+/// ball clears, so no construction may grow one there.
+pub(crate) fn widest_vertex_tolerance(b: &Brep) -> f64 {
+    GROWTH_PAST_RATIO * wide_vertex_limit(b)
+}
+
 fn check_vertices(b: &Brep, r: &mut Reports<'_>) -> Result<()> {
     for &v in b.vertex_list() {
         let data = b.vertex(v)?;
@@ -1269,7 +1276,7 @@ fn report_vertex_too_wide(b: &Brep, r: &mut Reports<'_>, v: VertexId) -> Result<
         other: None,
         other_type: 0,
         other_type_string: None,
-        tol3d: GROWTH_PAST_RATIO * wide_vertex_limit(b),
+        tol3d: widest_vertex_tolerance(b),
         value: b.vertex(v)?.tolerance,
         list_index: 1,
         message: Some("Vertex tolerance is too wide to excuse by clearance".into()),
@@ -1750,10 +1757,11 @@ fn face_contact(
 /// limit pass Test #82 as before.
 fn vertices_to_clear(b: &Brep, r: &mut Reports<'_>) -> Result<Vec<VertexId>> {
     let limit = wide_vertex_limit(b);
+    let widest = widest_vertex_tolerance(b);
     let mut vertices = Vec::new();
     for &v in b.vertex_list() {
         let tolerance = b.vertex(v)?.tolerance;
-        if tolerance > GROWTH_PAST_RATIO * limit {
+        if tolerance > widest {
             // too wide for clearance to excuse: a misplaced vertex, not a gap
             report_vertex_too_wide(b, r, v)?;
         } else if tolerance >= limit {
