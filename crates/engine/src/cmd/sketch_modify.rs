@@ -2134,12 +2134,30 @@ fn refuse_spatial_corner(sk: &Sketch, p: &Value, cmd: &str) -> Result<()> {
     Ok(())
 }
 
-/// Fillets and chamfers refuse a corner on an infinite line (#1359): it has no end there.
+/// The curves that are the sides of the corner at point `q`: the ones that end there, with an
+/// ellipse's axis (it would round a line into the axis) and a linked curve left out. A construction
+/// curve ending there too (a diagonal that centres something) is not one of the corner's sides: it
+/// keeps its end on the virtual sharp corner (#1026). Curves of every kind count, so a line, a conic
+/// and a construction line make a corner of the line and the conic (#9178).
+fn corner_sides(sk: &Sketch, q: usize) -> Vec<usize> {
+    let at: Vec<usize> = (0..sk.curves.len())
+        .filter(|i| {
+            sk.curves.get(*i).is_some_and(|c| c.kind.ends().is_some_and(|(a, b)| a == q || b == q))
+                && !sk.is_linked_curve(*i)
+                && !sk.is_ellipse_axis(*i)
+        })
+        .collect();
+    if at.len() == 2 { at } else { at.into_iter().filter(|i| sk.curves.get(*i).is_some_and(|c| !c.construction)).collect() }
+}
+
+/// Fillets and chamfers refuse a corner on an infinite line (#1359): it has no end there. The point
+/// form asks [`corner_sides`], as [`corner`] does, so an infinite construction line anchored at the
+/// corner does not refuse it: the corner is the two ordinary lines' (#23688).
 fn refuse_infinite_corner(sk: &Sketch, p: &Value, cmd: &str) -> Result<()> {
-    let infinite = |c: Option<usize>| c.and_then(|c| sk.curves.get(c)).is_some_and(|c| c.infinite);
+    let infinite = |c: usize| sk.curves.get(c).is_some_and(|c| c.infinite);
     let at_corner = match str_(p, "point").and_then(|r| sk.resolve_point(r)) {
-        Some(q) => sk.curves.iter().any(|c| c.infinite && c.kind.uses(q)),
-        None => ["a", "b"].iter().any(|k| infinite(str_(p, k).and_then(|i| sk.curve_index(i)))),
+        Some(q) => matches!(corner_sides(sk, q)[..], [a, b] if infinite(a) || infinite(b)),
+        None => ["a", "b"].iter().any(|k| str_(p, k).and_then(|i| sk.curve_index(i)).is_some_and(infinite)),
     };
     if at_corner { Err(bad(cmd, "an infinite line has no corner to round or cut: make it a normal line first")) } else { Ok(()) }
 }
@@ -2394,21 +2412,7 @@ fn corner(sk: &Sketch, p: &Value, cmd: &str) -> Result<(usize, usize, usize, usi
     };
     let (la, lb) = if let Some(r) = str_(p, "point") {
         let q = sk.resolve_point(r).ok_or_else(|| bad(cmd, format!("unknown point `{r}`")))?;
-        // An ellipse's construction axis is never a side: it would round a line into the axis.
-        let at: Vec<usize> = (0..sk.curves.len())
-            .filter(|i| {
-                sk.curves.get(*i).is_some_and(|c| c.kind.ends().is_some_and(|(a, b)| a == q || b == q))
-                    && !sk.is_linked_curve(*i)
-                    && !sk.is_ellipse_axis(*i)
-            })
-            .collect();
-        // A construction curve ending there too (a diagonal that centres something) is not one of
-        // the corner's sides: it keeps its end on the virtual sharp corner (#1026). Curves of
-        // every kind count here, so a line, a conic and a construction line make a corner of the
-        // line and the conic (#9178).
-        let sides: Vec<usize> =
-            if at.len() == 2 { at } else { at.into_iter().filter(|i| sk.curves.get(*i).is_some_and(|c| !c.construction)).collect() };
-        let lines: Vec<usize> = sides.into_iter().filter(|i| ends(*i).is_some()).collect();
+        let lines: Vec<usize> = corner_sides(sk, q).into_iter().filter(|i| ends(*i).is_some()).collect();
         match lines[..] {
             [a, b] => (a, b),
             _ => return Err(not_two_lines(sk, q, cmd)),

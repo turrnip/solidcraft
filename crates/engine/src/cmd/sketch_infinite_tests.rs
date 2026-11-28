@@ -555,6 +555,35 @@ fn fillets_and_chamfers_refuse_it_and_mirrors_copy_it() {
     assert!(made.iter().any(|id| curve(&sk, id).infinite), "{r}");
 }
 
+/// #23688: an infinite construction line anchored at a corner is not one of that corner's sides, so
+/// the point form rounds the two ordinary lines that meet there, as naming them as `a` and `b` does.
+/// The guide keeps its start on the virtual sharp corner (#1026).
+#[test]
+fn a_corner_an_infinite_construction_line_starts_at_is_rounded_either_way() {
+    let mut centres = Vec::new();
+    for how in ["point", "lines"] {
+        let mut s = new_sketch();
+        let guide = run(&mut s, "sketch.construction_line", json!({"at": [0, 0], "through": [0, 200]}));
+        let guide = guide["curves"][0].as_str().unwrap().to_string();
+        let made = run(&mut s, "sketch.line", json!({"points": [[200, 200], format!("{guide}.start"), [300, 0]]}));
+        let made: Vec<String> = made["curves"].as_array().unwrap().iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+        let mut p = if how == "point" { json!({"point": format!("{guide}.start")}) } else { json!({"a": made[0], "b": made[1]}) };
+        p["radius"] = json!(100);
+        let f = run(&mut s, "sketch.fillet", p);
+        let sk = sketch(&s);
+        let arc = sk.curve_index(f["curves"][0].as_str().unwrap()).unwrap();
+        assert!((sk.radius(arc).unwrap() - 100.0).abs() < 1e-7, "{how}: {f}");
+        centres.push(sk.center(arc).unwrap());
+        let gi = sk.curve_index(&guide).unwrap();
+        assert!(sk.curves[gi].infinite, "{how}: the guide stays infinite");
+        let CurveKind::Line { a, .. } = sk.curves[gi].kind else { panic!("{how}: the guide is a line") };
+        assert!(sk.point(a).unwrap().dist(Vec2::ZERO) < 1e-9, "{how}: the guide's start moved to {:?}", sk.point(a));
+        assert_eq!(run(&mut s, "sketch.inspect", json!({}))["status"], "solved", "{how}");
+    }
+    let want = Vec2::new(100.0 * (1.0 + 2.0_f64.sqrt()), 100.0);
+    assert!(centres.iter().all(|c| c.dist(want) < 1e-6), "{centres:?} vs {want:?}");
+}
+
 #[test]
 fn an_offset_of_it_is_infinite_too() {
     let mut s = new_sketch();
